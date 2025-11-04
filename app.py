@@ -215,50 +215,65 @@ def get_user_by_username(username):
         conn.close()
 
 def init_db():
-    conn = get_db_connection()
-    cur = conn.cursor()
-    # users 基本資訊
-    cur.execute(
-        '''CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            is_admin INTEGER NOT NULL DEFAULT 0,
-            is_active INTEGER NOT NULL DEFAULT 1
-        )'''
-    )
-    # User permissions for analyzers and VLM settings
-    cur.execute(
-        '''CREATE TABLE IF NOT EXISTS user_analyzers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            analyzer TEXT NOT NULL,
-            enabled INTEGER NOT NULL DEFAULT 1,
-            vlm_provider TEXT NOT NULL DEFAULT 'cloud', -- 'cloud' or 'local'
-            ollama_model TEXT DEFAULT NULL,
-            ocr_lang TEXT DEFAULT 'auto',
-            save_files INTEGER NOT NULL DEFAULT 0,
-            UNIQUE(user_id, analyzer),
-            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-        )'''
-    )
-    
-    # Add save_files column if it doesn't exist (for existing databases)
+    """Initialize database tables and ensure admin user exists."""
+    import logging
+    from werkzeug.security import generate_password_hash
+
     try:
-        cur.execute('ALTER TABLE user_analyzers ADD COLUMN save_files INTEGER NOT NULL DEFAULT 0')
-    except:
-        pass  # Column already exists
-    conn.commit()
-    # Default admin account
-    cur.execute("SELECT id FROM users WHERE username=?", ('admin',))
-    row = cur.fetchone()
-    if not row:
-        cur.execute(
-            "INSERT INTO users (username, password_hash, is_admin, is_active) VALUES (?, ?, ?, ?)",
-            ('admin', generate_password_hash('admin123', method='pbkdf2:sha256'), 1, 1)
-        )
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # Create users table if it doesn't exist
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                is_admin INTEGER NOT NULL DEFAULT 0,
+                is_active INTEGER NOT NULL DEFAULT 1
+            )
+        ''')
+
+        # Create user_analyzers table if it doesn't exist
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS user_analyzers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                analyzer TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                vlm_provider TEXT NOT NULL DEFAULT 'cloud',
+                ollama_model TEXT DEFAULT NULL,
+                ocr_lang TEXT DEFAULT 'auto',
+                save_files INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(user_id, analyzer),
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        ''')
+
+        # Add "save_files" column if it doesn't exist
+        try:
+            cur.execute("ALTER TABLE user_analyzers ADD COLUMN save_files INTEGER NOT NULL DEFAULT 0")
+        except Exception:
+            pass  # Ignore if it already exists
+
+        # Ensure default admin user exists (avoid duplicate insertion)
+        cur.execute("SELECT id FROM users WHERE username = ?", ('admin',))
+        if cur.fetchone() is None:
+            hashed_pw = generate_password_hash('admin123', method='pbkdf2:sha256')
+            cur.execute(
+                "INSERT INTO users (username, password_hash, is_admin, is_active) VALUES (?, ?, ?, ?)",
+                ('admin', hashed_pw, 1, 1)
+            )
+            print("[DB] Default admin created: username='admin', password='admin123'")
+        else:
+            print("[DB] Admin user already exists — skipping creation.")
+
         conn.commit()
-    conn.close()
+        conn.close()
+
+    except Exception as e:
+        logging.error(f"Failed to initialize database: {e}")
+
     
 # Initialize database at startup (init_db already defined here)
 try:
@@ -2844,15 +2859,59 @@ def admin_user_stats(username):
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 # 移除語言切換路由
+def migrate_db_schema():
+    """
+    Idempotent migration: ensure 'users' table has the columns required by admin.
+    Safe to run on every startup (will NOT duplicate columns).
+    """
+    import logging
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # Get existing columns in users table
+        cur.execute("PRAGMA table_info(users);")
+        pragma_rows = cur.fetchall()
+        # pragma_rows can be sqlite3.Row or tuples; name is in index 1
+        existing_cols = set()
+        for r in pragma_rows:
+            try:
+                # try dictionary-like
+                name = r['name']
+            except Exception:
+                # tuple-like -> second element is name
+                name = r[1]
+            existing_cols.add(name)
+
+        required = {
+            'display_name': "TEXT",
+            'email': "TEXT",
+            'phone': "TEXT",
+            'address': "TEXT",
+            'logo_file': "TEXT",
+            'notes': "TEXT"
+        }
+
+        for col, col_type in required.items():
+            if col not in existing_cols:
+                try:
+                    cur.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type};")
+                    logging.info(f"migrate_db_schema: added column '{col}'")
+                except Exception as e:
+                    logging.warning(f"migrate_db_schema: failed to add {col}: {e}")
+
+        conn.commit()
+        conn.close()
+        logging.info("migrate_db_schema: migration completed")
+    except Exception as e:
+        import logging as _log
+        _log.error(f"migrate_db_schema: unexpected error: {e}")
 
 if __name__ == '__main__':
     init_db()
-
-    # Get configuration from environment variables
+    migrate_db_schema()   # <-- add this line
+    # existing startup code...
     debug_mode = os.environ.get('FLASK_ENV', 'development') == 'development'
     port = int(os.environ.get('PORT', 5001))
+    app.run(debug=debug_mode, host='0.0.0.0', port=port)
 
-    # Always bind to 0.0.0.0 in container so it's accessible externally
-    host = '0.0.0.0'
-
-    app.run(debug=debug_mode, host=host, port=port)
