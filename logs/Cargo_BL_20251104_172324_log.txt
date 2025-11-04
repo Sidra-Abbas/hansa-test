@@ -1,0 +1,20 @@
+SID [INFO] Valid split qty for BL=EMA 2406 1202 | Split=399.605 < B/L=499.605 → kept.
+
+=== Processing Summary ===
+Total Processing Time: 55.08 seconds
+Total Tokens Used: 8744
+Total Pages: 1
+Successfully Processed Files: 1
+
+=== Detailed File Processing Statistics ===
+File: EMA 2406 1202.pdf
+  - LLM Tokens: 7603
+  - VLM Tokens: 1141
+  - Total Tokens: 8744
+  - Successfully Extracted Fields: 14
+  - Missing Fields: 1
+  - VLM Remediated Fields: OBL release date=2024-07-08
+
+End Time: 2025-11-04 17:23:25
+Output Excel: Cargo_BL_20251104_172324.xlsx
+Output Log: Cargo_BL_20251104_172324_log.txt

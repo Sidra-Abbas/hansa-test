@@ -6,11 +6,14 @@ import google.generativeai as genai
 from PIL import Image
 from pdf2image import convert_from_path
 
+from dotenv import load_dotenv
+load_dotenv()
+
 # -------------------------------------------------------------------
 # Gemini Configuration
 # -------------------------------------------------------------------
 GEMINI_CONFIG = {
-    "api_key": os.getenv("GEMINI_API_KEY", "AIzaSyDnqwyH_n_anNMTQQRwHxFWMvdt1wJRC28"),
+    "api_key": os.getenv("GOOGLE_API_KEY"),
     "project_id": "hansa-tanker",
     "model": "gemini-2.5-pro",
     "location": "us-central1",
