@@ -6,8 +6,6 @@ import google.generativeai as genai
 from PIL import Image
 from pdf2image import convert_from_path
 
-from dotenv import load_dotenv
-load_dotenv()
 
 # -------------------------------------------------------------------
 # Gemini Configuration
