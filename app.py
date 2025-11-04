@@ -17,6 +17,7 @@ from langdetect import detect, DetectorFactory
 import pdfplumber
 import docx
 from PIL import Image
+import os
 import pytesseract
 from bs4 import BeautifulSoup
 import email
@@ -36,6 +37,18 @@ import sqlite3
 from typing import List, Dict, Any, Optional
 # Configure Poppler path for pdf2image on Windows
 # Configure Poppler path for Windows
+logging.basicConfig(level=logging.INFO)  # ensure INFO logs are printed
+
+# Check current directory and files
+logging.info(f"Current working directory: {os.getcwd()}")
+logging.info(f"Files in project root: {os.listdir('.')}")
+if os.path.exists('data'):
+    logging.info(f"Files in 'data' folder: {os.listdir('data')}")
+else:
+    logging.warning("'data' folder does not exist!")
+
+
+
 import platform
 
 if platform.system() == 'Windows':
@@ -889,8 +902,6 @@ def analyze():
             # Pick English ('en') or any other language you want
             custom_prompt = svc_prompts_code.get('en') or ""
 
-        print(f"🧠 ARJ Using custom_prompt (first 10 words): {' '.join(custom_prompt.split()[:8])}")
-
         keep_filename = request.form.get('keep_filename') == 'on'
         user = get_current_user()
         # 檢查使用者是否有該分析器權限
@@ -946,29 +957,40 @@ def analyze():
 
 def extract_worker(args):
     filename, file_path = args
-    import pdfplumber
     local_total_pages = 0
     content = None
-    # Set Poppler path for Windows
-    POPPLER_PATH = r"C:\Program Files\poppler-24.08.0\Library\bin"
-    # Configure Tesseract path
-    import pytesseract
-    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+
+    # Debug logs to check file existence
     print(f"[Worker] Processing file: {filename}")
     print(f"[Worker] File path: {file_path}")
+    if not os.path.exists(file_path):
+        print(f"[Worker][ERROR] File does not exist: {file_path}")
+        return (filename, None, file_path, 0)
 
-    if filename.lower().endswith('.pdf'):
-        try:
+    try:
+        if filename.lower().endswith('.pdf'):
             with pdfplumber.open(file_path) as pdf:
                 page_count = len(pdf.pages)
                 local_total_pages = page_count
-                # app.logger.info(f"PDF {filename} 頁數: {page_count}")  # 多進程不能用 app.logger
-        except Exception as e:
-            pass  # 多進程不能用 app.logger
-    elif filename.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp')):
-        local_total_pages = 1
-    from app import extract_file_content  # 保證多進程可 import
-    content = extract_file_content(file_path)
+                print(f"[Worker] PDF {filename} page count: {page_count}")
+        elif filename.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp')):
+            local_total_pages = 1
+        else:
+            print(f"[Worker][WARNING] Unsupported file type: {filename}")
+    except Exception as e:
+        print(f"[Worker][ERROR] Failed to open file {filename}: {e}")
+        return (filename, None, file_path, 0)
+
+    # Extract content using your existing extract_file_content function
+    try:
+        from app import extract_file_content  # ensure multi-process import works
+        content = extract_file_content(file_path)
+        if not content:
+            print(f"[Worker][WARNING] Content is empty for file: {filename}")
+    except Exception as e:
+        print(f"[Worker][ERROR] extract_file_content failed for {filename}: {e}")
+        content = None
+
     return (filename, content, file_path, local_total_pages)
 
 
@@ -977,7 +999,6 @@ def process_files_with_progress(task_id, file_data_list, analysis_type, lang, cu
                                 username: Optional[str] = None, save_files: bool = False):
     import pdfplumber
     import time
-    app.logger.warning(f"ARJ in the start of process_files_with_progress")
     try:
         saved_files = []
         start_time = time.time()
@@ -1034,8 +1055,6 @@ def process_files_with_progress(task_id, file_data_list, analysis_type, lang, cu
         log_entries.append("")
         log_entries.append("=== LLM Analysis Phase ===")
 
-        # In the file with process_files_with_progress function
-        # Add this before the extract_worker section (around line 45)
 
         def extract_worker_multi_bl(file_path_tuple):
             """Modified extract worker for multi-BL PDFs"""
@@ -1092,7 +1111,6 @@ def process_files_with_progress(task_id, file_data_list, analysis_type, lang, cu
                 # Add last BL
                 if current_bl:
                     all_bl_texts.append(current_bl)
-            app.logger.info(f"ARJ in process_multi_bl_separately")
 
             # Combine all BLs with clear separation
             combined_text = "\n\n===NEXT_BL===\n\n".join(all_bl_texts)
@@ -1100,7 +1118,6 @@ def process_files_with_progress(task_id, file_data_list, analysis_type, lang, cu
 
         def create_llm_worker(keep_filename_param):
             def llm_worker(args):
-                app.logger.info("ARJ in llm_worker")
                 filename, content, file_path = args
 
                 if not content:
@@ -1253,7 +1270,7 @@ def process_files_with_progress(task_id, file_data_list, analysis_type, lang, cu
                 log_entries.append(f"  - Tokens Used: {tokens_used}")
                 log_entries.append(f"  - Analysis Result: {'Success' if result else 'Failed'}")
                 update_progress(task_id, total_files + processed_files_llm, total_files * 2, f"Analyzing {filename}")
-                app.logger.info(f"ARJ_in_llm_worker_2")
+
 
                 if result:
                     if analysis_type == 'Cargo_BL':
@@ -1318,7 +1335,6 @@ def process_files_with_progress(task_id, file_data_list, analysis_type, lang, cu
                             return item
 
                         def fill_missing_fields(d):
-                            app.logger.info(f"ARJ_in_llm_worker_fill_missing_fields")
                             nonlocal total_tokens
                             vlm_processed_fields = []
                             vlm_tokens_used = 0
