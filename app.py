@@ -57,17 +57,17 @@ else:
 
 
 
-import platform
-
-if platform.system() == 'Windows':
-    poppler_path = r'C:\Program Files\poppler-24.08.0\Library\bin'
-    if os.path.exists(poppler_path):
-        os.environ['PATH'] += os.pathsep + poppler_path
-
-    # Configure Tesseract path for OCR
-    tesseract_path = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-    if os.path.exists(tesseract_path):
-        pytesseract.pytesseract.tesseract_cmd = tesseract_path
+# import platform
+#
+# if platform.system() == 'Windows':
+#     poppler_path = r'C:\Program Files\poppler-24.08.0\Library\bin'
+#     if os.path.exists(poppler_path):
+#         os.environ['PATH'] += os.pathsep + poppler_path
+#
+#     # Configure Tesseract path for OCR
+#     tesseract_path = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+#     if os.path.exists(tesseract_path):
+#         pytesseract.pytesseract.tesseract_cmd = tesseract_path
 # 設置日誌配置
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -273,11 +273,36 @@ def init_db():
 
     except Exception as e:
         logging.error(f"Failed to initialize database: {e}")
+def migrate_db_schema():
+    """Add missing columns to existing tables (safe migration)."""
+    conn = get_db_connection()
+    cur = conn.cursor()
 
-    
+    new_columns = {
+        "display_name": "TEXT",
+        "email": "TEXT",
+        "phone": "TEXT",
+        "address": "TEXT",
+        "logo_file": "TEXT",
+        "notes": "TEXT"
+    }
+
+    for col, col_type in new_columns.items():
+        try:
+            cur.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type}")
+            print(f"✅ Added column: {col}")
+        except sqlite3.OperationalError:
+            pass
+
+    conn.commit()
+    conn.close()
+    print("✅ Database migration complete.")
+
+
 # Initialize database at startup (init_db already defined here)
 try:
     init_db()
+    migrate_db_schema()
 except Exception as e:
     logging.error(f"Failed to initialize database: {e}")
 
@@ -2859,59 +2884,11 @@ def admin_user_stats(username):
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 # 移除語言切換路由
-def migrate_db_schema():
-    """
-    Idempotent migration: ensure 'users' table has the columns required by admin.
-    Safe to run on every startup (will NOT duplicate columns).
-    """
-    import logging
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
 
-        # Get existing columns in users table
-        cur.execute("PRAGMA table_info(users);")
-        pragma_rows = cur.fetchall()
-        # pragma_rows can be sqlite3.Row or tuples; name is in index 1
-        existing_cols = set()
-        for r in pragma_rows:
-            try:
-                # try dictionary-like
-                name = r['name']
-            except Exception:
-                # tuple-like -> second element is name
-                name = r[1]
-            existing_cols.add(name)
-
-        required = {
-            'display_name': "TEXT",
-            'email': "TEXT",
-            'phone': "TEXT",
-            'address': "TEXT",
-            'logo_file': "TEXT",
-            'notes': "TEXT"
-        }
-
-        for col, col_type in required.items():
-            if col not in existing_cols:
-                try:
-                    cur.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type};")
-                    logging.info(f"migrate_db_schema: added column '{col}'")
-                except Exception as e:
-                    logging.warning(f"migrate_db_schema: failed to add {col}: {e}")
-
-        conn.commit()
-        conn.close()
-        logging.info("migrate_db_schema: migration completed")
-    except Exception as e:
-        import logging as _log
-        _log.error(f"migrate_db_schema: unexpected error: {e}")
 
 if __name__ == '__main__':
     init_db()
-    migrate_db_schema()   # <-- add this line
-    # existing startup code...
-    debug_mode = os.environ.get('FLASK_ENV', 'development') == 'development'
-    port = int(os.environ.get('PORT', 5001))
-    app.run(debug=debug_mode, host='0.0.0.0', port=port)
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
+
 
