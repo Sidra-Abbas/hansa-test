@@ -2048,7 +2048,7 @@ def clear_history():
                     os.remove(excel_path)
             except Exception:
                 pass
-    history.clear()
+
     save_history()
     return jsonify({'ok': True})
 
@@ -2520,32 +2520,45 @@ def gemini_vlm_field(file_path, field_name, lang='zh', provider_override: Option
 @app.route('/admin')
 @admin_required
 def admin_dashboard():
+    import json
     conn = get_db_connection()
-    rows = conn.execute('SELECT id, username, display_name, is_admin, is_active, email, phone, address, logo_file, notes FROM users ORDER BY id ASC').fetchall()
+
+    # Get users
+    users_rows = conn.execute('SELECT * FROM users ORDER BY id ASC').fetchall()
+    users = [dict(r) for r in users_rows]
+
+    # Get history from SQLite database
+    history_rows = conn.execute('''
+        SELECT * FROM history ORDER BY timestamp DESC
+    ''').fetchall()
+
+    sorted_history = []
+    for row in history_rows:
+        sorted_history.append({
+            'time': row['timestamp'],
+            'files': json.loads(row['files']),
+            'analysis_type': row['analysis_type'],
+            'lang': row['lang'],
+            'rows': row['rows'],
+            'cols': row['cols'],
+            'headers': json.loads(row['headers']) if row['headers'] else [],
+            'tokens': row['tokens'],
+            'excel': row['excel'],
+            'log_file': row['log_file'],
+            'username': row['username'],
+            'total_pages': row['total_pages'],
+            'saved_files': json.loads(row['saved_files']) if row['saved_files'] else [],
+            'time_cost': row['time_cost'],
+            'duration_str': row['duration_str']
+        })
+
     conn.close()
-    users = [dict(r) for r in rows]
-    
-    # 重新加載最新的歷史記錄
-    global history
-    if os.path.exists(HISTORY_FILE):
-        try:
-            with open(HISTORY_FILE, 'rb') as f:
-                history = pickle.load(f)
-        except Exception as e:
-            app.logger.error(f"Failed to reload history: {e}")
-    
-    # 傳遞歷史資料供統計使用，按時間降序排序
-    def get_history_time(x):
-        return x.get('time') or x.get('timestamp') or ''
-    sorted_history = sorted(history, key=get_history_time, reverse=True)
-    
-    # Create user mapping table (username -> user info)
+
     user_map = {u['username']: u for u in users}
-    
-    # Calculate statistics
     stats = calculate_user_statistics(sorted_history)
-    
-    return render_template('admin_dashboard.html', users=users, history=sorted_history, user_map=user_map, selected_username='', stats=stats)
+
+    return render_template('admin_dashboard.html', users=users, history=sorted_history,
+                           user_map=user_map, selected_username='', stats=stats)
 
 @app.route('/admin/users/add', methods=['POST'])
 @admin_required
@@ -2920,7 +2933,6 @@ def admin_clear_all_history():
                     app.logger.warning(f"Failed to delete log file: {e}")
         
         # Clear all history records
-        history.clear()
         save_history()
         
         app.logger.info(f"Administrator cleared all {original_count} history records")
