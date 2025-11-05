@@ -417,29 +417,29 @@ function updateProgress(progress, message, elapsedSeconds, current, total) {
   const progressBar = document.getElementById('progressBar');
   const progressText = document.getElementById('progressText');
   const analyzingLabel = document.getElementById('analyzing-label');
-  
-  // 更新進度條
-  progressBar.style.width = Math.min(progress, 100) + '%';
-  
+
+  // CRITICAL FIX: Always use the progress value from backend, never recalculate
+  const actualProgress = Math.min(Math.max(progress || 0, 0), 100);
+
+  // Only update if new progress is greater than or equal to current (prevent backwards movement)
+  const currentWidth = parseFloat(progressBar.style.width) || 0;
+  if (actualProgress >= currentWidth) {
+    progressBar.style.width = actualProgress + '%';
+  }
+
   // 格式化時間
   const minutes = Math.floor(elapsedSeconds / 60);
   const seconds = elapsedSeconds % 60;
   const timeStr = minutes > 0 ? `${minutes}:${seconds.toString().padStart(2, '0')}` : `${seconds}s`;
-  
-  // 更新進度文字
-  if (current && total) {
-    progressText.textContent = `${message || '處理中'} (${current}/${total}) - ${Math.round(progress)}%`;
-  } else {
-    progressText.textContent = (message || '處理中...') + ` - ${Math.round(progress)}%`;
-  }
-  
-  // 更新時間顯示 - 支援雙語
+
+  // 更新進度文字 - Use the message from backend, don't add custom calculation
+  progressText.textContent = `${message || 'Processing...'} - ${Math.round(actualProgress)}%`;
+
+  // 更新時間顯示
   if (analyzingLabel) {
     if (message && message.includes('中')) {
-      // 包含中文，使用中文介面
       analyzingLabel.textContent = `分析中，請稍候... ${timeStr}`;
     } else {
-      // 預設英文介面
       analyzingLabel.textContent = `Analyzing, please wait... ${timeStr}`;
     }
   }

@@ -233,6 +233,28 @@ def init_db():
                 is_active INTEGER NOT NULL DEFAULT 1
             )
         ''')
+        # NEW: History table
+        cur.execute('''
+                    CREATE TABLE IF NOT EXISTS history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        username TEXT NOT NULL,
+                        timestamp TEXT NOT NULL,
+                        files TEXT NOT NULL,
+                        analysis_type TEXT,
+                        lang TEXT,
+                        rows INTEGER,
+                        cols INTEGER,
+                        headers TEXT,
+                        tokens INTEGER,
+                        excel TEXT,
+                        log_file TEXT,
+                        time_cost REAL,
+                        duration_str TEXT,
+                        total_pages INTEGER,
+                        saved_files TEXT,
+                        FOREIGN KEY(username) REFERENCES users(username)
+                    )
+                ''')
 
         # Create user_analyzers table if it doesn't exist
         cur.execute('''
@@ -901,23 +923,34 @@ def export_to_excel(data, filename, preview_title=None, manual_data=None, includ
 
 def save_to_history(entry):
     try:
-        history_file = 'history.pkl'
-        global history
-        # 載入現有歷史記錄
-        if os.path.exists(history_file):
-            with open(history_file, 'rb') as f:
-                file_history = pickle.load(f)
-        else:
-            file_history = []
-        # 添加新記錄
-        file_history.append(entry)
-        # 儲存歷史記錄
-        with open(history_file, 'wb') as f:
-            pickle.dump(file_history, f)
-        # 同步到全域 history
-        history.append(entry)
+        import json
+        conn = get_db_connection()
+        conn.execute('''
+            INSERT INTO history (username, timestamp, files, analysis_type, lang, rows, cols, 
+                                headers, tokens, excel, log_file, time_cost, duration_str, 
+                                total_pages, saved_files)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            entry.get('username'),
+            entry.get('time'),
+            json.dumps(entry.get('files', [])),
+            entry.get('analysis_type'),
+            entry.get('lang'),
+            entry.get('rows'),
+            entry.get('cols'),
+            json.dumps(entry.get('headers', [])),
+            entry.get('tokens'),
+            entry.get('excel'),
+            entry.get('log_file'),
+            entry.get('time_cost'),
+            entry.get('duration_str'),
+            entry.get('total_pages'),
+            json.dumps(entry.get('saved_files', []))
+        ))
+        conn.commit()
+        conn.close()
     except Exception as e:
-        app.logger.error(f"Failed to save history record: {str(e)}")
+        app.logger.error(f"Failed to save history: {str(e)}")
 
 # 修正檔案內容提取函數名稱
 def extract_text(file_path, file_extension):
@@ -1913,23 +1946,40 @@ def download_zip_files(index):
         app.logger.error(f"Error creating ZIP file: {e}", exc_info=True)
         return f"Error creating ZIP file: {str(e)}", 500
 
+
 @app.route('/history')
 @login_required
 def get_history():
-    lang = 'en'  # Default to English
-    # Only show own history: will take effect after username is added to history entry; allow all for now, add username when saving later
-    def get_history_time(x):
-        return x.get('time') or x.get('timestamp') or ''
-    # Safe filtering: All users (including administrators) can only see their own records on /history page
-    # Administrators should go to /admin page to see all records
+    import json
     username = session.get('username')
-    
-    # All users can only see their own records
-    filtered = [h for h in history if h.get('username') == username]
-    
-    sorted_history = sorted(filtered, key=get_history_time, reverse=True)
-    return render_template('history.html', history=sorted_history, config=config, lang=lang)
 
+    conn = get_db_connection()
+    rows = conn.execute('''
+        SELECT * FROM history WHERE username = ? ORDER BY timestamp DESC
+    ''', (username,)).fetchall()
+    conn.close()
+
+    history = []
+    for row in rows:
+        history.append({
+            'time': row['timestamp'],
+            'files': json.loads(row['files']),
+            'analysis_type': row['analysis_type'],
+            'lang': row['lang'],
+            'rows': row['rows'],
+            'cols': row['cols'],
+            'headers': json.loads(row['headers']),
+            'tokens': row['tokens'],
+            'excel': row['excel'],
+            'log_file': row['log_file'],
+            'time_cost': row['time_cost'],
+            'duration_str': row['duration_str'],
+            'username': row['username'],
+            'total_pages': row['total_pages'],
+            'saved_files': json.loads(row['saved_files']) if row['saved_files'] else []
+        })
+
+    return render_template('history.html', history=history, config=config, lang='en')
 @app.route('/clear_history', methods=['POST'])
 def clear_history():
     # 先刪除所有已存的 Excel 檔案
