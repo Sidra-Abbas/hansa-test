@@ -1,11 +1,12 @@
 import threading
 import logging
 import os
+import time
 from typing import Tuple, Optional
 import google.generativeai as genai
+from google.api_core import exceptions
 from PIL import Image
 from pdf2image import convert_from_path
-
 
 # -------------------------------------------------------------------
 # Gemini Configuration
@@ -17,6 +18,24 @@ GEMINI_CONFIG = {
     "location": "us-central1",
 }
 
+
+# -------------------------------------------------------------------
+# Rate Limiter
+# -------------------------------------------------------------------
+class RateLimiter:
+    def __init__(self, rpm=10):
+        self.delay = 60.0 / rpm
+        self.last_call = 0
+
+    def wait(self):
+        elapsed = time.time() - self.last_call
+        if elapsed < self.delay:
+            time.sleep(self.delay - elapsed)
+        self.last_call = time.time()
+
+
+limiter = RateLimiter(10)
+
 # -------------------------------------------------------------------
 # Initialize Gemini
 # -------------------------------------------------------------------
@@ -26,11 +45,12 @@ _model_instance = None
 _lock = threading.Lock()
 
 # Default retry + generation config
-MAX_RETRIES = 3
+MAX_RETRIES = 5
 GENERATION_CONFIG = {
     "temperature": 0.6,
     "top_p": 0.9,
     "top_k": 40,
+    "max_output_tokens": 8000,  # Increased for large documents
 }
 
 
@@ -64,6 +84,9 @@ def call_gemini(prompt: str, image_path: Optional[str] = None) -> Tuple[str, int
 
     for attempt in range(MAX_RETRIES):
         try:
+            # Apply rate limiting
+            limiter.wait()
+
             # -------------------------
             # Handle image or PDF input
             # -------------------------
@@ -78,12 +101,14 @@ def call_gemini(prompt: str, image_path: Optional[str] = None) -> Tuple[str, int
 
                 response = model.generate_content(
                     [prompt, img],
-                    generation_config=GENERATION_CONFIG
+                    generation_config=GENERATION_CONFIG,
+                    request_options={"timeout": 180}  # 3 minute timeout
                 )
             else:
                 response = model.generate_content(
                     prompt,
-                    generation_config=GENERATION_CONFIG
+                    generation_config=GENERATION_CONFIG,
+                    request_options={"timeout": 180}  # 3 minute timeout
                 )
 
             # -------------------------
@@ -130,10 +155,22 @@ def call_gemini(prompt: str, image_path: Optional[str] = None) -> Tuple[str, int
 
             return result, tokens_used
 
+        except exceptions.ResourceExhausted as e:
+            wait_time = min(2 ** attempt, 60)
+            logging.warning(f"⚠️ Rate limit hit. Waiting {wait_time}s... (attempt {attempt + 1}/{MAX_RETRIES})")
+            time.sleep(wait_time)
+
+        except exceptions.DeadlineExceeded as e:
+            logging.error(f"⏱️ Timeout on attempt {attempt + 1}/{MAX_RETRIES}: {e}")
+            if attempt == MAX_RETRIES - 1:
+                return f"TIMEOUT after {MAX_RETRIES} attempts", 0
+            continue
+
         except Exception as e:
             logging.error(f"Attempt {attempt + 1}/{MAX_RETRIES} failed: {e}")
             if attempt == MAX_RETRIES - 1:
                 return f"Error after {MAX_RETRIES} attempts: {e}", 0
+            time.sleep(min(2 ** attempt, 30))
             continue
 
     return "", 0
