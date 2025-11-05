@@ -200,7 +200,7 @@ def get_progress(task_id):
 # =========================
 # User and Permission Management: SQLite Simple Management
 # =========================
-DB_PATH = os.path.join(os.path.dirname(__file__), 'app.db')
+DB_PATH = '/data/app.db' if os.path.exists('/data') else os.path.join(os.path.dirname(__file__), 'app.db')
 
 def get_db_connection():
     conn = sqlite3.connect(DB_PATH)
